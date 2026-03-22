@@ -255,6 +255,7 @@ class KnowledgeBase:
         # heuristic danger scores for unproven cells (0..1 each axis)
         self.pit_prob   = {}
         self.wumpus_prob = {}
+        self.inference_log = []   # newest deductions from last _infer() call
 
     def all_cells(self):
         for r in range(self.size):
@@ -291,6 +292,7 @@ class KnowledgeBase:
 
     # ── core inference engine ─────────────────────────────────────────────────
     def _infer(self):
+        self.inference_log = []   # clear log for this inference pass
         changed = True
         while changed:
             changed = False
@@ -302,6 +304,8 @@ class KnowledgeBase:
                     for nr, nc in self.adj(r, c):
                         if (nr,nc) not in self.no_pit:
                             self.no_pit.add((nr,nc))
+                            self.inference_log.append(
+                                f"R1: ({nr},{nc}) pit-free via ({r},{c})")
                             changed = True
 
                 # R2: no stench → all neighbours wumpus-free
@@ -309,6 +313,8 @@ class KnowledgeBase:
                     for nr, nc in self.adj(r, c):
                         if (nr,nc) not in self.no_wump:
                             self.no_wump.add((nr,nc))
+                            self.inference_log.append(
+                                f"R2: ({nr},{nc}) W-free via ({r},{c})")
                             changed = True
 
                 # R6: breeze + exactly one unproven pit-candidate adj
@@ -320,6 +326,8 @@ class KnowledgeBase:
                         pc = pit_cands[0]
                         if pc not in self.pit_confirmed:
                             self.pit_confirmed.add(pc)
+                            self.inference_log.append(
+                                f"R6: ({pc[0]},{pc[1]}) PIT confirmed!")
                             changed = True
 
                 # R7: stench + exactly one unproven wumpus-candidate adj
@@ -331,6 +339,8 @@ class KnowledgeBase:
                         wc_cell = w_cands[0]
                         if self.wumpus_loc != wc_cell:
                             self.wumpus_loc = wc_cell
+                            self.inference_log.append(
+                                f"R7: Wumpus at ({wc_cell[0]},{wc_cell[1]})!")
                             changed = True
 
             # R9: intersect all stench-adj candidate sets → if size 1, confirmed
@@ -349,14 +359,14 @@ class KnowledgeBase:
                     wloc = next(iter(candidates))
                     if self.wumpus_loc != wloc:
                         self.wumpus_loc = wloc
+                        self.inference_log.append(
+                            f"R9: Wumpus at ({wloc[0]},{wloc[1]}) by intersection!")
                         changed = True
 
             # Confirmed pit cells → their neighbours are pit-free from OTHER direction?
             # (not derivable further, but mark pit_confirmed cells as no_wump if wumpus_loc differs)
             for pc in self.pit_confirmed:
                 if pc != self.wumpus_loc and pc not in self.no_wump:
-                    # A confirmed pit cell is not the wumpus cell (wumpus is unique)
-                    # We can't mark it no_wump in general, but can note it's a pit.
                     pass
 
             # R5: no_pit ∧ (no_wump ∨ wumpus dead) → safe
@@ -366,14 +376,21 @@ class KnowledgeBase:
                     wump_ok = (r,c) in self.no_wump or not self.wumpus_alive
                     if pit_ok and wump_ok:
                         self.safe.add((r,c))
+                        self.inference_log.append(
+                            f"R5: ({r},{c}) is SAFE")
                         changed = True
 
-            # Propagate: if wumpus_loc is confirmed, all OTHER unvisited cells are wumpus-free
+            # Propagate: if wumpus_loc is confirmed, all OTHER cells are wumpus-free
             if self.wumpus_loc and self.wumpus_alive:
+                newly_freed = []
                 for r, c in self.all_cells():
                     if (r,c) != self.wumpus_loc and (r,c) not in self.no_wump:
                         self.no_wump.add((r,c))
+                        newly_freed.append((r,c))
                         changed = True
+                if newly_freed:
+                    self.inference_log.append(
+                        f"R7b: {len(newly_freed)} cells W-free (Wumpus at {self.wumpus_loc})")
 
         # Update frontier
         self.frontier = set()
@@ -381,6 +398,12 @@ class KnowledgeBase:
             for nr,nc in self.adj(r,c):
                 if (nr,nc) not in self.visited:
                     self.frontier.add((nr,nc))
+
+        # Keep only the most significant entries (prioritise confirmations over free-marks)
+        priority = [e for e in self.inference_log if any(
+            k in e for k in ("SAFE", "PIT confirmed", "Wumpus at", "R7b"))]
+        rest     = [e for e in self.inference_log if e not in priority]
+        self.inference_log = (priority + rest)[:8]
 
         # Update heuristic danger for unproven cells (used only when no safe move exists)
         self._update_danger()
@@ -619,6 +642,11 @@ class WumpusGame:
         for m in msgs:
             self._log(m)
 
+        # Show KB inference entries in log when AI mode is on
+        if self.ai_mode:
+            for entry in self.kb.inference_log:
+                self._log(f"  {entry}")
+
         if cell["pit"]:
             self._log("💀 You fell into a PIT!")
             self.score -= 1000
@@ -679,7 +707,10 @@ class WumpusGame:
                 self._log("🎯 WUMPUS slain! +500")
                 play_snd(SND_GOLD)
                 self.ps.burst(*self.cell_center(r,c), C_RED, 40, 5)
-                self.kb.wumpus_killed()   # full KB re-inference after kill
+                self.kb.wumpus_killed()
+                if self.ai_mode:
+                    for entry in self.kb.inference_log:
+                        self._log(f"  {entry}")
                 return
             r, c = r+dr, c+dc
         self._log("🏹 Arrow missed...")
@@ -689,6 +720,9 @@ class WumpusGame:
             self.kb.no_wump.add((r,c))
             r, c = r+dr, c+dc
         self.kb._infer()
+        if self.ai_mode:
+            for entry in self.kb.inference_log:
+                self._log(f"  {entry}")
 
     def grab_gold(self):
         if self.state != STATE_PLAY: return
