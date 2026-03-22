@@ -706,11 +706,12 @@ class WumpusGame:
     def climb_out(self):
         if self.state != STATE_PLAY: return
         if self.player == (GRID_SIZE-1, 0):
-            if self.has_gold:
-                self.score += 500
-                self._log("🏆 Escaped with gold! +500")
-            else:
-                self._log("🚪 Escaped without gold.")
+            if not self.has_gold:
+                self._log("⚠ Find the gold before escaping!")
+                play_snd(SND_DANGER)
+                return
+            self.score += 500
+            self._log("🏆 Escaped with gold! +500")
             if self.score > self.high_score:
                 self.high_score = self.score
                 save_high_score(self.high_score)
@@ -1120,78 +1121,49 @@ class WumpusGame:
         pygame.draw.rect(surf, C_PANEL, panel)
         pygame.draw.line(surf, C_BORDER, (ox, 0), (ox, panel_h), 2)
 
-        surf.set_clip(pygame.Rect(ox, 0, PANEL_W, panel_h - 2))
+        surf.set_clip(pygame.Rect(ox, 0, PANEL_W, panel_h))
 
-        y = 10
-        def header(text, col=C_TEXT):
-            nonlocal y
-            # subtle background bar for headers
+        def header(text, y, col=C_TEXT):
             pygame.draw.rect(surf, (25, 32, 55), (ox + 4, y - 2, PANEL_W - 8, 22))
             t = FONT_MED.render(text, True, col)
             surf.blit(t, (ox + 10, y))
-            y += 26
+            return y + 26
 
-        def row(label, val, col=C_TEXT):
-            nonlocal y
+        def row(label, val, y, col=C_TEXT):
             t1 = FONT_SMALL.render(label, True, C_DIM)
             t2 = FONT_SMALL.render(str(val), True, col)
             surf.blit(t1, (ox + 10, y))
             surf.blit(t2, (ox + 112, y))
-            y += 17
+            return y + 17
 
-        def divider():
-            nonlocal y
+        def divider(y):
             pygame.draw.line(surf, C_BORDER, (ox+6, y+3), (ox+PANEL_W-6, y+3), 1)
-            y += 10
+            return y + 10
 
-        # ── Stats ─────────────────────────────────────────────────────────────
-        header("WUMPUS WORLD", C_GOLD)
-        divider()
-        row("Score:",   self.score,  C_GREEN if self.score >= 0 else C_RED)
-        row("Best:",    self.high_score, C_GOLD)
-        row("Arrows:",  str(self.arrows) + " left", C_ORANGE)
-        row("Gold:",    "CARRYING!" if self.has_gold else "not found",
-                        C_GOLD if self.has_gold else C_DIM)
-        row("Wumpus:",  "DEAD" if self.wumpus_dead else "ALIVE",
-                        C_GREEN if self.wumpus_dead else C_RED)
-        row("Pos:",     f"({self.player[0]},{self.player[1]})", C_CYAN)
-        row("Visited:", f"{len(self.kb.visited)}/{GRID_SIZE**2}", C_TEXT)
+        # ── TOP: Stats (anchored to top) ──────────────────────────────────────
+        y = 10
+        y = header("WUMPUS WORLD", y, C_GOLD)
+        y = divider(y)
+        y = row("Score:",   self.score,  y, C_GREEN if self.score >= 0 else C_RED)
+        y = row("Best:",    self.high_score, y, C_GOLD)
+        y = row("Arrows:",  str(self.arrows) + " left", y, C_ORANGE)
+        y = row("Gold:",    "CARRYING!" if self.has_gold else "not found", y,
+                            C_GOLD if self.has_gold else C_DIM)
+        y = row("Wumpus:",  "DEAD" if self.wumpus_dead else "ALIVE", y,
+                            C_GREEN if self.wumpus_dead else C_RED)
+        y = row("Pos:",     f"({self.player[0]},{self.player[1]})", y, C_CYAN)
+        y = row("Visited:", f"{len(self.kb.visited)}/{GRID_SIZE**2}", y, C_TEXT)
 
-        # ── AI ────────────────────────────────────────────────────────────────
-        divider()
+        # ── AI status ─────────────────────────────────────────────────────────
+        y = divider(y)
         ai_col = C_GREEN if self.ai_mode else C_DIM
-        header("AI SOLVER  " + ("ON " if self.ai_mode else "OFF  [TAB]"), ai_col)
-        if self.kb.wumpus_loc:
-            row("W-loc:", str(self.kb.wumpus_loc), C_RED)
+        y = header("AI SOLVER  " + ("ON " if self.ai_mode else "OFF  [TAB]"), y, ai_col)
+        if self.ai_mode and self.kb.wumpus_loc:
+            y = row("W-loc:", str(self.kb.wumpus_loc), y, C_RED)
 
-        # ── Log ───────────────────────────────────────────────────────────────
-        divider()
-        header("LOG", C_DIM)
-        for msg in self.log[-5:]:
-            t = FONT_SMALL.render(msg[:34], True, C_TEXT)
-            surf.blit(t, (ox + 8, y))
-            y += 15
+        stats_bottom = y  # mark where top section ends
 
-        # ── Legend ────────────────────────────────────────────────────────────
-        divider()
-        header("LEGEND", C_DIM)
-        legend = [
-            ((200, 50,  50),  "Wumpus  (red circle)"),
-            ((100, 60, 210),  "Pit     (dark vortex)"),
-            ((230, 200, 20),  "Gold    (yellow star)"),
-            ((50,  210, 240), "Breeze  (cyan waves)"),
-            ((70,  230, 70),  "Stench  (green blobs)"),
-            ((60,  220, 100), "Safe    (green check)"),
-        ]
-        for dot_col, txt in legend:
-            pygame.draw.circle(surf, dot_col, (ox + 16, y + 7), 6)
-            t3 = FONT_SMALL.render(txt, True, C_TEXT)
-            surf.blit(t3, (ox + 28, y))
-            y += 15
-
-        # ── Controls ──────────────────────────────────────────────────────────
-        divider()
-        header("CONTROLS", C_TEXT)
+        # ── BOTTOM: Controls (anchored to bottom) ─────────────────────────────
         controls = [
             ("WASD/Arrows", "Move"),
             ("G",           "Grab gold"),
@@ -1201,6 +1173,54 @@ class WumpusGame:
             ("R",           "New game"),
             ("ESC",         "Menu"),
         ]
+        ctrl_h = 26 + len(controls) * 15 + 10 + 10   # header + rows + divider + bottom padding
+        ctrl_y = panel_h - ctrl_h
+
+        # ── MIDDLE: Legend (just above controls) ──────────────────────────────
+        legend = [
+            ((200, 50,  50),  "Wumpus  (red circle)"),
+            ((100, 60, 210),  "Pit     (dark vortex)"),
+            ((230, 200, 20),  "Gold    (yellow star)"),
+            ((50,  210, 240), "Breeze  (cyan waves)"),
+            ((70,  230, 70),  "Stench  (green blobs)"),
+            ((60,  220, 100), "Safe    (green check)"),
+        ]
+        legend_h = 26 + len(legend) * 15 + 10   # header + rows + divider
+        legend_y = ctrl_y - legend_h
+
+        # ── LOG fills the space between stats and legend ───────────────────────
+        log_area_top    = stats_bottom
+        log_area_bottom = legend_y - 4
+        log_area_h      = log_area_bottom - log_area_top
+
+        # Draw log section if there's room for at least a header + 1 line
+        line_h = 15
+        if log_area_h > 26 + line_h:
+            y = log_area_top
+            y = divider(y)
+            y = header("LOG", y, C_DIM)
+            max_lines = max(1, (log_area_bottom - y) // line_h)
+            for msg in self.log[-max_lines:]:
+                if y + line_h > log_area_bottom:
+                    break
+                t = FONT_SMALL.render(msg[:34], True, C_TEXT)
+                surf.blit(t, (ox + 8, y))
+                y += line_h
+
+        # Draw legend
+        y = legend_y
+        y = divider(y)
+        y = header("LEGEND", y, C_DIM)
+        for dot_col, txt in legend:
+            pygame.draw.circle(surf, dot_col, (ox + 16, y + 7), 6)
+            t3 = FONT_SMALL.render(txt, True, C_TEXT)
+            surf.blit(t3, (ox + 28, y))
+            y += 15
+
+        # Draw controls
+        y = ctrl_y
+        y = divider(y)
+        y = header("CONTROLS", y, C_TEXT)
         for key, act in controls:
             t1 = FONT_SMALL.render(f"[{key}]", True, C_ORANGE)
             t2 = FONT_SMALL.render(act,        True, C_TEXT)
