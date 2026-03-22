@@ -1,6 +1,6 @@
-# Wumpus World: A Logic-Based Intelligent Agent for Cave Navigation
+# Wumpus World
 
-A Python application demonstrating propositional logic, Horn clause inference, and an AI agent that reasons under uncertainty — based on the classic Wumpus World problem from Russell & Norvig's *Artificial Intelligence: A Modern Approach*.
+A Python desktop game and AI demonstration built with Pygame, implementing propositional logic, Horn clause inference, and an intelligent agent that reasons under uncertainty — based on the classic Wumpus World problem from Russell & Norvig's Artificial Intelligence: A Modern Approach.
 
 ---
 
